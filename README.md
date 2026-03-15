@@ -1,19 +1,149 @@
-# 🛡️ NudeGuard – AI-Powered Safe Browsing Extension
+# 🛡️ NudeGuard
 
-A Chrome extension that automatically detects and blurs explicit images using the [nude.js](https://github.com/pa7/nude.js) nudity detection library.
+**AI-powered safe browsing extension for Chrome.**
+Automatically detects and blurs explicit images using Yahoo's Open-NSFW model — entirely on-device, no data ever leaves your browser.
 
 ---
 
-## 📁 File Structure
+## Requirements
+
+- Google Chrome (or any Chromium-based browser)
+- `curl` and `tar` (for the setup script)
+
+---
+
+## Installation
+
+### Step 1 — Download dependencies
+
+Run the setup script once from inside the extension folder:
+
+```bash
+bash setup.sh
+```
+
+This downloads two things into the extension directory:
+
+| What | Where | Size |
+|---|---|---|
+| ONNX Runtime Web v1.17.3 + WASM | `lib/` | ~5MB |
+| Yahoo open_nsfw.onnx model | `models/` | ~13MB |
+
+### Step 2 — Load in Chrome
+
+1. Open `chrome://extensions/`
+2. Enable **Developer Mode** (top-right toggle)
+3. Click **Load unpacked**
+4. Select the `nudeguard-extension/` folder
+5. Pin the 🛡️ icon from the toolbar puzzle-piece menu
+
+---
+
+## Usage
+
+The extension runs automatically on every page. When an image loads:
+
+1. A **shimmer placeholder** replaces it while scanning
+2. If the image is clean → it **fades in** normally
+3. If the image is explicit → it stays **blurred** with a 🛡️ badge
+
+Use the **popup** (click the toolbar icon) to adjust settings or toggle the shield on/off.
+
+---
+
+## Sensitivity Setting
+
+The sensitivity slider controls the NSFW score threshold. The model outputs a score from 0 to 1 for every image.
+
+| Sensitivity | Behaviour | Best for |
+|---|---|---|
+| **0.85+** | Catches only the most explicit content. Minimal false positives. | Low-interruption browsing |
+| **0.70** ✦ | Catches most explicit content with few false positives. | **Recommended default** |
+| **0.60** | Catches borderline content too (swimwear, suggestive poses). | Parental controls |
+| **0.50** | Yahoo's original decision boundary. Most aggressive. | Strict filtering |
+
+**Start at 0.70.** The model was benchmarked at 0.50, but in practice that produces false positives on skin-tone clothing, medical imagery, and swimwear. 0.70 is the community-established sweet spot.
+
+---
+
+## How It Works
+
+```
+Image appears on page
+        │
+        ▼
+content.js — hold image, show shimmer
+        │
+        ├─ 1. Same-origin: draw to canvas → toDataURL()
+        ├─ 2. CORS fetch() → blob → dataURL
+        └─ 3. Background SW fetch (bypasses CORS entirely)
+                        │
+                        ▼
+               dataURL ready
+                        │
+                        ▼
+background.js — ONNX inference
+  ┌─ Preprocess ────────────────────────────────┐
+  │  decode → 256×256 → centre-crop 224×224     │
+  │  swap RGB→BGR → subtract mean [104,117,123] │
+  │  shape: [1, 224, 224, 3] float32 HWC        │
+  └─────────────────────────────────────────────┘
+        │
+        ▼
+  open_nsfw.onnx (ResNet-50)
+        │
+        ▼
+  [sfw_prob, nsfw_prob]
+        │
+        ├─ nsfw >= sensitivity → blur + badge
+        └─ nsfw <  sensitivity → fade in
+```
+
+### Why three fetch attempts?
+
+Browser content scripts are subject to CORS — they can't read pixel data from cross-origin images (which is most images on the web). The three-stage fallback handles this:
+
+- **Attempt 1** works on same-origin images (your own site, local files)
+- **Attempt 2** works on CDNs that send `Access-Control-Allow-Origin` headers
+- **Attempt 3** routes through the background service worker, which runs in a privileged extension context not bound by CORS — so it can fetch any URL covered by `host_permissions: <all_urls>`
+
+---
+
+## Model Details
+
+Yahoo's Open-NSFW model was originally published as a Caffe model in 2016 and has become the standard baseline for browser-side NSFW detection. This extension uses an ONNX conversion from the `opennsfw-standalone` package.
+
+| Property | Value |
+|---|---|
+| Architecture | ResNet-50 (Yahoo internal variant) |
+| Training data | ~1 million images, Yahoo internal dataset |
+| Input shape | `[1, 224, 224, 3]` — batch × height × width × channels |
+| Channel order | BGR (not RGB) |
+| Mean subtraction | `[104.0, 117.0, 123.0]` (B, G, R) |
+| Output shape | `[1, 2]` — `[sfw_probability, nsfw_probability]` |
+| Output activation | Softmax (sfw + nsfw always sum to 1.0) |
+| Runtime | ONNX Runtime Web via WASM (single-threaded) |
+
+---
+
+## File Structure
 
 ```
 nudeguard-extension/
-├── manifest.json      # Extension manifest (MV3)
-├── background.js      # Service worker – settings & stats persistence
-├── content.js         # Page scanner – detects & blurs images
-├── nude.js            # ⚠️ Placeholder – see Setup below
-├── popup.html         # Extension popup UI
-├── popup.js           # Popup logic
+├── manifest.json          Chrome extension manifest (MV3)
+├── background.js          Service worker: ONNX inference engine + CORS-free fetching
+├── content.js             Page script: image discovery, shimmer, blur overlay
+├── popup.html             Extension popup UI
+├── popup.js               Popup logic (settings, stats)
+├── setup.sh               One-time dependency download script
+├── lib/
+│   ├── ort.min.js         ONNX Runtime Web (UMD bundle)
+│   ├── ort-wasm.wasm
+│   ├── ort-wasm-simd.wasm
+│   ├── ort-wasm-threaded.wasm
+│   └── ort-wasm-simd-threaded.wasm
+├── models/
+│   └── open_nsfw.onnx     Yahoo Open-NSFW model (~13MB)
 └── icons/
     ├── icon16.png
     ├── icon48.png
@@ -22,68 +152,25 @@ nudeguard-extension/
 
 ---
 
-## ⚙️ Setup (Required)
+## Privacy
 
-### 1. Download the real nude.js library
-
-The `nude.js` file in this package is a **stub placeholder**. You must replace it with the real library:
-
-```bash
-curl -o nude.js https://raw.githubusercontent.com/pa7/nude.js/master/src/nude.js
-```
-
-Or via npm:
-```bash
-npm install nudejs
-cp node_modules/nudejs/src/nude.js ./nude.js
-```
-
-### 2. Load the extension in Chrome
-
-1. Open Chrome and navigate to `chrome://extensions/`
-2. Enable **Developer Mode** (top-right toggle)
-3. Click **Load unpacked**
-4. Select this `nudeguard-extension/` folder
-5. The 🛡️ NudeGuard icon will appear in your toolbar
+- All inference runs locally in your browser via WebAssembly
+- No images, scores, or metadata are sent anywhere
+- No analytics, no telemetry, no remote calls of any kind
+- Stats (images scanned/blurred) are stored locally in `chrome.storage.sync`
 
 ---
 
-## 🎛️ Features
+## Troubleshooting
 
-| Feature | Description |
-|---|---|
-| **Auto-blur** | Scans all images on a page and blurs explicit ones |
-| **Hold to Reveal** | Users can hold the "reveal" button on blurred images for 0.8s to temporarily unblur |
-| **Adjustable Blur Intensity** | Slider from 4px (subtle) to 40px (heavy) |
-| **Adjustable Sensitivity** | Control the nudity score threshold (10%–95%) |
-| **Toggle On/Off** | Instantly pause/resume protection |
-| **Stats Tracking** | See how many images have been scanned and blurred |
-| **DOM Observer** | Watches for dynamically loaded images (infinite scroll, SPAs) |
+**Extension loads but nothing is blurred**
+Open DevTools (F12) on any page and look for `[NudeGuard]` log lines. If you see `Queue empty. Scanned: 0`, the model may still be loading — wait a few seconds and reload the page. The ONNX session takes 1–3 seconds to initialise on first use.
 
----
+**`importScripts` error / model not found**
+Make sure you ran `bash setup.sh` and that `lib/ort.min.js` and `models/open_nsfw.onnx` exist before loading the extension.
 
-## 🔬 How It Works
+**High false positive rate**
+Increase the sensitivity slider (try 0.80). Images with large areas of skin-tone colour (sunsets, wood textures, certain artwork) can score higher than expected.
 
-1. **Content script** (`content.js`) injects into every page
-2. All `<img>` elements are queued for analysis (throttled to avoid UI freezing)
-3. Each image is loaded into an off-screen `Image` element with `crossOrigin = 'anonymous'`
-4. `nude.js` performs skin-pixel analysis and returns a **score** (0–1)
-5. If `score >= sensitivity`, a CSS `blur()` filter is applied and an overlay is added
-6. Detected images get a "Hold to reveal" button for a 0.8-second hold-to-show gesture
-
----
-
-## ⚠️ Limitations
-
-- **CORS**: Images served without CORS headers cannot be analyzed (canvas tainting restriction). The extension skips these gracefully.
-- **Accuracy**: nude.js uses skin-pixel heuristics, not deep learning. Expect some false positives and false negatives.
-- **Performance**: Very image-heavy pages may see a slight slowdown; the queue throttle minimizes this.
-- **HTTPS**: Works on both HTTP and HTTPS sites.
-
----
-
-## 🔒 Privacy
-
-- **No data leaves your browser.** All analysis is done locally via JavaScript.
-- No images are uploaded to any server.
-- Stats are stored locally in `chrome.storage.sync`.
+**High false negative rate**
+Decrease the sensitivity slider (try 0.60). Some content is genuinely borderline and the model may score it just under your threshold.
