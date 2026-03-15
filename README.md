@@ -1,4 +1,4 @@
-# 🛡️ NudeGuard
+# 🛡️ NudeGuardv2
 
 **AI-powered safe browsing extension for Chrome.**
 Automatically detects and blurs explicit images using Yahoo's Open-NSFW model — entirely on-device, no data ever leaves your browser.
@@ -24,10 +24,10 @@ bash setup.sh
 
 This downloads two things into the extension directory:
 
-| What | Where | Size |
+| What | Where |
 |---|---|---|
-| ONNX Runtime Web v1.17.3 + WASM | `lib/` | ~5MB |
-| Yahoo open_nsfw.onnx model | `models/` | ~13MB |
+| ONNX Runtime Web v1.17.3 + WASM | `lib/` |
+| Yahoo open_nsfw.onnx model | `models/` |
 
 ### Step 2 — Load in Chrome
 
